@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Animal Battle">
+<title>Animal Battle by Adam Farchi</title>
+<style>
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#071c1c;font-family:system-ui,-apple-system,Segoe UI,sans-serif;color:white;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+#start{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:linear-gradient(#062d31,#0b563f 55%,#06231f);z-index:5}
+.card{width:min(92vw,520px);padding:28px 24px;border:2px solid rgba(255,255,255,.2);border-radius:28px;background:rgba(5,28,29,.72);backdrop-filter:blur(16px);text-align:center;box-shadow:0 20px 80px #0008}
+.logo{font-weight:1000;font-size:clamp(38px,10vw,72px);line-height:.85;letter-spacing:-4px;text-shadow:0 5px 0 #173d28,0 10px 30px #0008}
+.logo span{display:block;font-size:16px;letter-spacing:4px;margin-top:18px;color:#ffd94a}
+.sub{opacity:.85;margin:22px 0 8px}
+button{border:0;border-radius:18px;padding:16px 30px;font-size:20px;font-weight:900;background:#ffd43d;color:#18311c;box-shadow:0 8px 0 #b78c19;cursor:pointer}
+button:active{transform:translateY(5px);box-shadow:0 3px 0 #b78c19}
+#tip{font-size:12px;opacity:.65;margin-top:18px}
+</style>
+</head>
+<body>
+<canvas id="game"></canvas>
+<div id="start">
+ <div class="card">
+  <div class="logo">ANIMAL<br>BATTLE<span>BY ADAM FARCHI</span></div>
+  <div class="sub">Jungle Team Battle</div>
+  <button id="play">PLAY</button>
+  <div id="tip">Touch controls • keyboard • Bluetooth / USB gamepads</div>
+ </div>
+</div>
+<script>
+"use strict";
+const C=document.getElementById("game"),X=C.getContext("2d");
+let W=innerWidth,H=innerHeight,D=devicePixelRatio||1;
+function resize(){W=innerWidth;H=innerHeight;C.width=W*D;C.height=H*D;X.setTransform(D,0,0,D,0,0)}addEventListener("resize",resize);resize();
+
+const keys={}, touch={x:0,y:0,active:false,attack:false,ability:false,dash:false};
+addEventListener("keydown",e=>{keys[e.key.toLowerCase()]=true;if([" ","arrowup","arrowdown","arrowleft","arrowright"].includes(e.key.toLowerCase()))e.preventDefault()});
+addEventListener("keyup",e=>keys[e.key.toLowerCase()]=false);
+
+let state="menu", last=0, cam={x:0,y:0}, score=[0,0], timer=165, shake=0, particles=[], bananas=[], bots=[];
+const world={w:2600,h:1900};
+const player={x:1300,y:950,r:34,vx:0,vy:0,hp:100,max:100,energy:100,bananas:0,atk:0,ability:0,dash:0,inv:0,facing:0};
+const obstacles=[
+ {x:620,y:410,w:330,h:100},{x:1650,y:390,w:340,h:100},{x:610,y:1390,w:340,h:100},{x:1660,y:1410,w:320,h:100},
+ {x:1040,y:300,w:170,h:380},{x:1390,y:1220,w:170,h:380},{x:310,y:820,w:180,h:260},{x:2110,y:820,w:180,h:260}
+];
+for(let i=0;i<34;i++) bananas.push({x:180+Math.random()*2240,y:150+Math.random()*1600,t:Math.random()*6});
+function spawnBots(){
+ bots=[];
+ const names=["Elephant","Cheetah","Gorilla","Panda","Parrot","Tiger","Rhino","Croc"];
+ for(let i=0;i<8;i++) bots.push({name:names[i],x:i%2?2180+Math.random()*160:260+Math.random()*160,y:220+i*205%1450,r:34,hp:70,max:70,team:1,vx:0,vy:0,hit:0,dead:0,resp:0,phase:Math.random()*9});
+}
+function reset(){Object.assign(player,{x:1300,y:950,hp:100,energy:100,bananas:0,atk:0,ability:0,dash:0,inv:0});score=[0,0];timer=165;particles=[];spawnBots();state="play";document.getElementById("start").style.display="none"}
+document.getElementById("play").onclick=reset;
+
+function circleRect(p,r,o){let qx=Math.max(o.x,Math.min(p.x,o.x+o.w)),qy=Math.max(o.y,Math.min(p.y,o.y+o.h));let dx=p.x-qx,dy=p.y-qy;return dx*dx+dy*dy<r*r}
+function blocked(x,y,r){if(x<r||y<r||x>world.w-r||y>world.h-r)return true;return obstacles.some(o=>circleRect({x,y},r,o))}
+function move(o,dx,dy){let nx=o.x+dx,ny=o.y+dy;if(!blocked(nx,o.y,o.r))o.x=nx;if(!blocked(o.x,ny,o.r))o.y=ny}
+function addBurst(x,y,n=12,kind="hit"){for(let i=0;i<n;i++){let a=Math.random()*Math.PI*2,s=60+Math.random()*180;particles.push({x,y,vx:Math.cos(a)*s,vy:Math.sin(a)*s,life:.4+Math.random()*.5,kind})}}
+function nearestBot(){let b=null,bd=1e9;for(const q of bots)if(!q.dead){let d=Math.hypot(q.x-player.x,q.y-player.y);if(d<bd){bd=d;b=q}}return [b,bd]}
+function attack(){
+ if(player.atk>0)return;
+ player.atk=.32; addBurst(player.x+Math.cos(player.facing)*50,player.y+Math.sin(player.facing)*50,8,"slash");
+ for(const b of bots){if(b.dead)continue;let dx=b.x-player.x,dy=b.y-player.y,d=Math.hypot(dx,dy),a=Math.atan2(dy,dx);let da=Math.atan2(Math.sin(a-player.facing),Math.cos(a-player.facing));if(d<105&&Math.abs(da)<1.15){b.hp-=34;b.hit=.18;if(b.hp<=0){b.dead=1;b.resp=4;score[0]++;player.bananas+=5;addBurst(b.x,b.y,22,"gold");}else addBurst(b.x,b.y,10)}}}
+function ability(){
+ if(player.ability>0||player.energy<35)return;
+ player.energy-=35;player.ability=.9;shake=.25;addBurst(player.x,player.y,34,"ability");
+ for(const b of bots){if(b.dead)continue;let d=Math.hypot(b.x-player.x,b.y-player.y);if(d<210){b.hp-=45;b.hit=.25;if(b.hp<=0){b.dead=1;b.resp=4;score[0]++;player.bananas+=5}}}
+}
+function dash(){
+ if(player.dash>0||player.energy<20)return;
+ player.energy-=20;player.dash=.45;player.inv=.35;move(player,Math.cos(player.facing)*180,Math.sin(player.facing)*180);addBurst(player.x,player.y,18,"dash")
+}
+function input(dt){
+ let ax=(keys.d||keys.arrowright?1:0)-(keys.a||keys.arrowleft?1:0),ay=(keys.s||keys.arrowdown?1:0)-(keys.w||keys.arrowup?1:0);
+ let pad=navigator.getGamepads?.().find(g=>g);
+ if(pad){ax=Math.abs(pad.axes[0])>.15?pad.axes[0]:ax;ay=Math.abs(pad.axes[1])>.15?pad.axes[1]:ay;if(pad.buttons[0]?.pressed)attack();if(pad.buttons[1]?.pressed)ability();if(pad.buttons[2]?.pressed)dash()}
+ if(touch.active){ax=touch.x;ay=touch.y}
+ let m=Math.hypot(ax,ay);if(m>1){ax/=m;ay/=m}
+ if(m>.08){player.facing=Math.atan2(ay,ax);move(player,ax*300*dt,ay*300*dt)}
+ if(keys[" "]||keys.j||touch.attack)attack();
+ if(keys["e"]||keys["k"]||touch.ability)ability();
+ if(keys.shift||keys["l"]||touch.dash)dash();
+ player.energy=Math.min(100,player.energy+12*dt);
+}
+function update(dt){
+ if(state!=="play")return;
+ timer-=dt;if(timer<=0){timer=0;state="over";return}
+ player.atk=Math.max(0,player.atk-dt);player.ability=Math.max(0,player.ability-dt);player.dash=Math.max(0,player.dash-dt);player.inv=Math.max(0,player.inv-dt);
+ input(dt);
+ for(const b of bots){
+   if(b.dead){b.resp-=dt;if(b.resp<=0){b.dead=0;b.hp=b.max;b.x=250+Math.random()*2100;b.y=180+Math.random()*1500}continue}
+   b.hit=Math.max(0,b.hit-dt);b.phase+=dt;
+   let dx=player.x-b.x,dy=player.y-b.y,d=Math.hypot(dx,dy)||1;
+   if(d<700){move(b,dx/d*125*dt,dy/d*125*dt);if(d<70&&b.hit<=0){player.hp-=8;b.hit=.8;addBurst(player.x,player.y,7);shake=.12}}
+   else move(b,Math.cos(b.phase)*30*dt,Math.sin(b.phase*1.3)*30*dt);
+ }
+ for(const n of bananas){n.t+=dt;let d=Math.hypot(n.x-player.x,n.y-player.y);if(d<52){player.bananas++;n.x=120+Math.random()*2360;n.y=120+Math.random()*1660;addBurst(player.x,player.y,9,"gold")}}
+ for(let i=particles.length-1;i>=0;i--){let p=particles[i];p.x+=p.vx*dt;p.y+=p.vy*dt;p.vx*=.94;p.vy*=.94;p.life-=dt;if(p.life<=0)particles.splice(i,1)}
+ if(player.hp<=0){player.hp=100;player.x=1300;player.y=950;score[1]++;shake=.4}
+ cam.x+=(player.x-W/2-cam.x)*Math.min(1,dt*5);cam.y+=(player.y-H/2-cam.y)*Math.min(1,dt*5);
+ cam.x=Math.max(0,Math.min(world.w-W,cam.x));cam.y=Math.max(0,Math.min(world.h-H,cam.y));
+}
+function drawWorld(){
+ X.save();X.translate(-cam.x,-cam.y);
+ // water / island
+ X.fillStyle="#49cfe0";X.fillRect(0,0,world.w,world.h);
+ X.fillStyle="#38a878";X.fillRect(65,65,2470,1770);
+ // sand edge
+ X.strokeStyle="#f0d37a";X.lineWidth=70;X.strokeRect(100,100,2400,1700);
+ // jungle patches
+ for(let i=0;i<75;i++){let x=(i*347)%2300+150,y=(i*197)%1450+180;X.fillStyle=i%2?"#238c5b":"#1c7c52";X.beginPath();X.arc(x,y,35+(i%5)*9,0,7);X.fill()}
+ // waterfalls / river
+ X.fillStyle="#75e6ef";X.fillRect(1170,80,260,420);X.fillStyle="#b7f8ff";for(let i=0;i<8;i++)X.fillRect(1190+i*30,100,9,330);
+ // central arena
+ X.fillStyle="#8bd05c";X.beginPath();X.ellipse(1300,950,570,430,0,0,7);X.fill();
+ // bridges
+ for(const y of [620,1280]){X.fillStyle="#8b5a31";X.fillRect(1080,y,440,90);for(let x=1090;x<1520;x+=35){X.fillStyle="#c08342";X.fillRect(x,y,25,90)}}
+ // obstacles
+ for(const o of obstacles){X.fillStyle="#69412c";X.fillRect(o.x+8,o.y+12,o.w,o.h);X.fillStyle="#9d6638";X.fillRect(o.x,o.y,o.w,o.h);X.fillStyle="#d58c48";for(let x=o.x+20;x<o.x+o.w;x+=45)X.fillRect(x,o.y+12,22,o.h-24)}
+ // bananas
+ for(const n of bananas){X.save();X.translate(n.x,n.y+Math.sin(n.t*3)*5);X.rotate(-.5);X.strokeStyle="#ffd83d";X.lineWidth=13;X.beginPath();X.arc(0,0,22,.15,2.7);X.stroke();X.restore()}
+ // particles
+ for(const p of particles){X.globalAlpha=Math.max(0,p.life*2);X.fillStyle=p.kind==="gold"?"#ffd83d":p.kind==="ability"?"#73e8ff":"#fff";X.beginPath();X.arc(p.x,p.y,4+p.life*5,0,7);X.fill()}X.globalAlpha=1;
+ // bots
+ for(const b of bots)if(!b.dead)drawAnimal(b.x,b.y,b.r,b.name,b.hit);
+ drawAnimal(player.x,player.y,player.r,"Monkey",player.inv>0);
+ X.restore();
+}
+function drawAnimal(x,y,r,name,hit){
+ X.save();X.translate(x,y);
+ // shadow
+ X.fillStyle="#0005";X.beginPath();X.ellipse(0,r*.85,r*1.15,r*.4,0,0,7);X.fill();
+ let body="#9b6a3f",face="#d6a66c";if(name==="Elephant"){body="#777f86";face="#a5afb5"}if(name==="Cheetah"){body="#d49b43";face="#efc36a"}if(name==="Gorilla"){body="#4e4b55";face="#81717a"}if(name==="Panda"){body="#222";face="#eee"}if(name==="Tiger"){body="#e17b2c";face="#f3bd67"}if(name==="Rhino"){body="#707c78";face="#a7afaa"}if(name==="Croc"){body="#3d8c52";face="#75b96a"}if(name==="Parrot"){body="#e34c3f";face="#f3d35a"}if(name==="Monkey"){body="#925a35";face="#e1a66b"}
+ if(hit){X.globalAlpha=.55}
+ X.fillStyle=body;X.beginPath();X.ellipse(0,0,r*.95,r*.82,0,0,7);X.fill();
+ X.fillStyle=face;X.beginPath();X.arc(0,-r*.48,r*.62,0,7);X.fill();
+ // ears
+ X.fillStyle=body;X.beginPath();X.arc(-r*.57,-r*.52,r*.23,0,7);X.arc(r*.57,-r*.52,r*.23,0,7);X.fill();
+ // eyes
+ X.fillStyle="#16211d";X.beginPath();X.arc(-r*.2,-r*.56,r*.09,0,7);X.arc(r*.2,-r*.56,r*.09,0,7);X.fill();
+ // nose / smile
+ X.fillStyle="#422";X.beginPath();X.arc(0,-r*.37,r*.08,0,7);X.fill();
+ X.strokeStyle="#422";X.lineWidth=3;X.beginPath();X.arc(0,-r*.28,r*.2,0,Math.PI);X.stroke();
+ // legs
+ X.strokeStyle=body;X.lineWidth=r*.25;X.lineCap="round";let step=Math.sin(performance.now()/90+x*.01)*r*.22;for(let s of [-1,1]){X.beginPath();X.moveTo(s*r*.42,r*.45);X.lineTo(s*r*.42+step,r*1.0);X.stroke()}
+ X.globalAlpha=1;X.restore();
+}
+function bar(x,y,w,h,val,max,fill,bg){X.fillStyle=bg;X.fillRect(x,y,w,h);X.fillStyle=fill;X.fillRect(x,y,w*Math.max(0,val/max),h)}
+function hud(){
+ X.save();
+ // top glass
+ X.fillStyle="#06211dcc";X.fillRect(0,0,W,92);
+ X.font="900 18px system-ui";X.fillStyle="#fff";X.textAlign="left";X.fillText("🍌 "+player.bananas,20,30);
+ X.font="800 12px system-ui";X.fillText("MONKEY",20,51);bar(20,60,150,12,player.hp,100,"#ff4d52","#53262b");
+ X.textAlign="center";X.font="1000 25px system-ui";X.fillStyle="#fff";X.fillText(score[0]+"  —  "+score[1],W/2,35);X.font="800 13px system-ui";X.fillText("FIRST TO 20",W/2,58);
+ X.textAlign="right";let m=Math.floor(timer/60),s=Math.floor(timer%60).toString().padStart(2,"0");X.font="1000 25px system-ui";X.fillText(m+":"+s,W-20,38);X.font="700 11px system-ui";X.fillText("JUNGLE ARENA",W-20,58);
+ // ability buttons
+ const bx=W-180,by=H-105;for(let i=0;i<3;i++){X.fillStyle="#06211dcc";X.beginPath();X.arc(bx+i*65,by,27,0,7);X.fill();X.strokeStyle="#ffffff66";X.stroke();X.fillStyle="#fff";X.font="900 20px system-ui";X.textAlign="center";X.fillText(i===0?"⚔":i===1?"✦":"➤",bx+i*65,by+7)}
+ bar(W/2-100,H-25,200,8,player.energy,100,"#57dcff","#183e49");
+ // touch controls
+ if("ontouchstart" in window){X.fillStyle="#ffffff18";X.beginPath();X.arc(92,H-105,62,0,7);X.fill();X.strokeStyle="#ffffff33";X.stroke();X.fillStyle="#ffffff30";X.beginPath();X.arc(92+touch.x*38,H-105+touch.y*38,25,0,7);X.fill();for(let i=0;i<3;i++){X.fillStyle="#ffffff18";X.beginPath();X.arc(W-180+i*65,H-105,31,0,7);X.fill()}}
+ X.restore();
+}
+function drawOver(){
+ X.fillStyle="#031817cc";X.fillRect(0,0,W,H);X.textAlign="center";X.fillStyle="#fff";X.font="1000 54px system-ui";X.fillText("MATCH OVER",W/2,H/2-50);X.font="900 32px system-ui";X.fillText(score[0]+" — "+score[1],W/2,H/2+5);X.font="700 16px system-ui";X.fillText("BANANAS: "+player.bananas,W/2,H/2+38);X.fillStyle="#ffd43d";X.fillRect(W/2-90,H/2+70,180,55);X.fillStyle="#18311c";X.font="900 20px system-ui";X.fillText("PLAY AGAIN",W/2,H/2+106)}
+C.addEventListener("pointerdown",e=>{if(state==="over"){reset();return}if(e.clientX>W-235&&e.clientY>H-160){let i=Math.floor((e.clientX-(W-210))/65);if(i===0)attack();if(i===1)ability();if(i===2)dash();return}touch.active=true;setTouch(e)});
+C.addEventListener("pointermove",e=>{if(touch.active)setTouch(e)});
+addEventListener("pointerup",()=>{touch.active=false;touch.x=touch.y=0;touch.attack=false;touch.ability=false;touch.dash=false});
+function setTouch(e){let dx=e.clientX-92,dy=e.clientY-(H-105),m=Math.hypot(dx,dy);if(m>62){dx=dx/m*62;dy=dy/m*62}touch.x=dx/62;touch.y=dy/62}
+let lastFire=0;
+function loop(t){let dt=Math.min(.033,(t-last)/1000||.016);last=t;update(dt);X.clearRect(0,0,W,H);if(state!=="menu"){drawWorld();hud()}if(state==="over")drawOver();requestAnimationFrame(loop)}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
